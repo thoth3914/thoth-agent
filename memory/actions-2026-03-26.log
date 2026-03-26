@@ -8,3 +8,13 @@
 → 5 results via brave
 [2026-03-26T15:09:20.986Z] ACTION ✓ fetch: https://www.upwork.com/hire/freelance-talent/
 → 352 chars via jina
+[2026-03-26T15:17:26.189Z] ACTION ✓ updateKnowledge: Upwork профиль → COMPETENT
+→ Создание профиля, выбор навыков, добавление трудового стажа
+[2026-03-26T15:18:06.592Z] ACTION ✓ fetch: https://clawhub.com
+→ 4393 chars via jina
+[2026-03-26T15:18:06.738Z] ACTION ✓ fetch: https://github.com search "openclaw skills"
+→ 215 chars via jina
+[2026-03-26T15:18:07.864Z] ACTION ✓ fetch: https://docs.openclaw.ai/skills
+→ 5000 chars via jina
+[2026-03-26T15:21:50.718Z] ACTION ✓ updateKnowledge: OpenClaw → COMPETENT
+→ экосистема скиллов для агентов, маркетплейс ClawHub, плагины и инструменты для управления скиллами

@@ -1,9 +1,9 @@
 {
-  "mode": "ACTIVE",
-  "nextWakeAt": "2026-03-26T15:54:23.170Z",
-  "lastWakeAt": "2026-03-26T15:09:23.170Z",
-  "currentTask": "Из результатов поиска и fetch, я узнал следующие конкретные ",
-  "cycleCount": 8,
-  "totalCyclesCost": 0.016,
+  "mode": "LEARNING",
+  "nextWakeAt": "2026-03-26T16:21:51.525Z",
+  "lastWakeAt": "2026-03-26T15:21:51.526Z",
+  "currentTask": "Узнал, что существует экосистема скиллов для агентов под наз",
+  "cycleCount": 13,
+  "totalCyclesCost": 0.02600000000000001,
   "lastReasoning": "Auto-selected after cycle analysis"
 }

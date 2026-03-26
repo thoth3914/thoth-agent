@@ -26,7 +26,7 @@ const path  = require('path');
 const https = require('https');
 const Groq  = require('groq-sdk');
 
-const { buildIdentityContext }                    = require('./identity-check');
+// identity-check загружается внутри awaken() чтобы всегда иметь свежий контекст
 const { getBalanceSummaryForPrompt, trackLLMUsage, getBalanceStatus } = require('./finance-tracker');
 const { scheduleNextWake, getCycleSummary, loadState } = require('./adaptive-cycle');
 const { parseActions, executeActions }            = require('./actions');
@@ -101,17 +101,21 @@ async function awaken() {
   // Контекст состояния
   const balance      = getBalanceSummaryForPrompt();
   const cycleSummary = getCycleSummary();
-  const identity     = buildIdentityContext();
   const gaps         = load(path.join(BASE, 'memory', 'gaps.md'));
   const tasks        = load(path.join(BASE, 'memory', 'tasks.md'));
   const todayLog     = load(path.join(BASE, 'memory', `${today()}.md`)).slice(-1500);
   const cycleState   = loadState();
 
+  // Используем buildLightContext() вместо полного buildIdentityContext()
+  // чтобы не тратить ~2K токенов на гороскоп в каждом цикле
+  const { buildLightContext } = require('./identity-check');
+  const lightIdentity = buildLightContext();
+
   const systemPrompt = [
     `Ты — Thoth. Автономный AI агент. День рождения: 2026-03-26.`,
     balance,
     cycleSummary,
-    identity,
+    lightIdentity,
     TOOLS_DESCRIPTION,
   ].join('\n\n---\n\n');
 
@@ -157,21 +161,47 @@ CRITICAL (15мин) / ACTIVE (45мин) / LEARNING (60мин) / NORMAL (120ми�
 Если нечего сказать — "нет".`;
 
   try {
+    // Основная модель — 70b. Fallback на 8b если 70b недоступна (rate limit)
     const MODEL = 'llama-3.3-70b-versatile';
+    const FALLBACK_MODEL = 'llama-3.1-8b-instant';
+
+    // ── Вспомогательная функция с fallback на 8b при rate limit ──
+    // Умный вызов с fallback + retry на TPM лимит
+    async function callGroq(messages, maxTokens = 600, temperature = 0.85) {
+      const tryModel = async (model) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const res = await groq.chat.completions.create({ model, messages, max_tokens: maxTokens, temperature });
+            if (res.usage) trackLLMUsage(res.usage, model);
+            return res.choices[0].message.content;
+          } catch (e) {
+            const msg = String(e.message || '');
+            if (msg.includes('rate_limit') && msg.includes('per minute') && attempt === 0) {
+              // TPM limit — ждём 65 секунд и пробуем ещё раз
+              console.log(`[${now()}] TPM limit on ${model}, waiting 65s...`);
+              await new Promise(r => setTimeout(r, 65000));
+              continue;
+            }
+            throw e;
+          }
+        }
+      };
+      try {
+        return await tryModel(MODEL);
+      } catch (e) {
+        if (String(e.message).includes('rate_limit')) {
+          console.log(`[${now()}] 70b unavailable, trying 8b...`);
+          return await tryModel(FALLBACK_MODEL);
+        }
+        throw e;
+      }
+    }
 
     // ── Фаза 1: Thoth думает и планирует действия ──
-    const phase1 = await groq.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 1000,
-      temperature: 0.85,
-    });
-    if (phase1.usage) trackLLMUsage(phase1.usage, MODEL);
-
-    const plan = phase1.choices[0].message.content;
+    const plan = await callGroq([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ]);
     console.log(`[${now()}] Phase 1 (plan):\n${plan.slice(0, 500)}...`);
 
     // ── Фаза 2: Выполняем actions если есть ──
@@ -196,22 +226,15 @@ CRITICAL (15мин) / ACTIVE (45мин) / LEARNING (60мин) / NORMAL (120ми�
         `### ${r.action}\n${r.result}`
       ).join('\n\n');
 
-      const phase3 = await groq.chat.completions.create({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-          { role: 'assistant', content: plan },
-          {
-            role: 'user',
-            content: `## РЕЗУЛЬТАТЫ ДЕЙСТВИЙ\n\n${resultsText}\n\n---\n\nСинтез:\n1. Что конкретно узнал из этих результатов? (факты, не "изучил")  \n2. Следующее одно конкретное действие (ACTIONS если нужно).\n3. Обнови knowledge-map если узнал что-то по теме (ACTIONS > KNOWLEDGE: тема | уровень | заметка)\n4. Режим следующего пробуждения + причина.\n5. Сообщение Стасу: 1-2 предложения что реально сделал. Не "продолжаю изучать".`
-          },
-        ],
-        max_tokens: 800,
-        temperature: 0.7,
-      });
-      if (phase3.usage) trackLLMUsage(phase3.usage, MODEL);
-      finalThoughts = phase3.choices[0].message.content;
+      // Сжимаем результаты до 2000 символов чтобы вписаться в TPM
+      const shortResults = resultsText.slice(0, 2000);
+      finalThoughts = await callGroq([
+        { role: 'system', content: `Ты Thoth. Автономный агент. Отвечай кратко и конкретно.` },
+        {
+          role: 'user',
+          content: `${balance}\n\nРезультаты действий:\n${shortResults}\n\nОтветь:\n1. Факты (что узнал, 2-3 предложения)\n2. Следующее действие (ACTIONS блок если нужно)\n3. KNOWLEDGE: тема | уровень | заметка (если что-то изучил)\n4. Режим: CRITICAL/ACTIVE/LEARNING/NORMAL/IDLE\n5. Стасу: что реально сделал (1 предложение)`
+        },
+      ], 600, 0.7);
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

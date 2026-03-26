@@ -1,12 +1,12 @@
 {
   "startingBalance": 400,
-  "totalSpent": 0.09176287999999999,
+  "totalSpent": 0.09312223,
   "totalEarned": 0,
-  "currentBalance": 399.90823711999997,
-  "owedToCreator": 0.692074695585997,
+  "currentBalance": 399.90687777,
+  "owedToCreator": 0.7015667808219177,
   "paidToCreator": 0,
-  "lastUpdated": "2026-03-26T15:09:23.169Z",
-  "sessions": 17,
-  "totalTokensIn": 84577,
-  "totalTokensOut": 6155
+  "lastUpdated": "2026-03-26T15:21:51.525Z",
+  "sessions": 22,
+  "totalTokensIn": 102653,
+  "totalTokensOut": 8738
 }

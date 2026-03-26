@@ -171,7 +171,22 @@ bot.onText(/\/status/, (msg) => {
     recentActions = log.split('\n').filter(l => l.startsWith('[') && l.includes('ACTION')).slice(-5).join('\n');
   } catch {}
 
-  const text = `${balanceStatus}\n\n⚙️ *Цикл:*\n${cycle}\n\n🎯 *Текущая задача:* ${currentTask.slice(0, 80)}\n⏰ *Следующее пробуждение:* ${nextWake}\n\n📋 *Последние действия:*\n${recentActions || 'нет'}`;
+  // Последние мысли из tasks.md (что узнал + что планирует)
+  let lastThoughts = '';
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'memory', 'tasks.md'), 'utf8');
+    // Берём первые 600 символов — там актуальные выводы
+    lastThoughts = raw.replace(/^# Tasks.*\n/, '').replace(/```actions[\s\S]*?```/g, '[actions]').trim().slice(0, 600);
+  } catch {}
+
+  const text = [
+    balanceStatus,
+    `\n⚙️ *Цикл:* ${cycle}`,
+    `⏰ *Следующее пробуждение:* ${nextWake}`,
+    `\n🎯 *Текущая задача:*\n${currentTask.slice(0, 120)}`,
+    `\n🧠 *Последние мысли/планы:*\n${lastThoughts || '—'}`,
+    `\n📋 *Последние действия:*\n${recentActions || 'нет'}`,
+  ].join('\n');
   bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 });
 

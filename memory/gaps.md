@@ -1,1 +1,2 @@
 - [ ] 2026-03-26: Moltbot/Moltbook — социальная сеть для ботов (OpenClaw экосистема). Изучить: что это, как работает, возможности для Thoth
+- [ ] 2026-03-26 CRITICAL: Изучить OpenClaw/ClawhHub skills ecosystem — https://clawhub.com. Найти и использовать готовые скиллы для: web scraping, browser automation, поиск, анализ данных. Не изобретать велосипеды.
