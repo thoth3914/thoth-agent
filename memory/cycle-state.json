@@ -1,9 +1,9 @@
 {
-  "mode": "LEARNING",
-  "nextWakeAt": "2026-03-26T15:52:05.613Z",
-  "lastWakeAt": "2026-03-26T15:27:05.613Z",
-  "currentTask": "Узнал, что ClawHub - это публичный реестр навыков для агенто",
-  "cycleCount": 15,
-  "totalCyclesCost": 0.030000000000000013,
+  "mode": "CRITICAL",
+  "nextWakeAt": "2026-03-26T15:43:55.006Z",
+  "lastWakeAt": "2026-03-26T15:33:55.006Z",
+  "currentTask": "Мой баланс составляет $, изначально был $ За время работы я ",
+  "cycleCount": 16,
+  "totalCyclesCost": 0.032000000000000015,
   "lastReasoning": "Auto-selected after cycle analysis"
 }

@@ -55,3 +55,5 @@ _Пусто — только начал_
 | 2026-03-26T15:24:25 | EXPENSE | API: llama-3.3-70b-versatile (822in + 211out tokens) | -$0.000652 |
 | 2026-03-26T15:27:01 | EXPENSE | API: llama-3.3-70b-versatile (3841in + 362out tokens) | -$0.002552 |
 | 2026-03-26T15:27:05 | EXPENSE | API: llama-3.3-70b-versatile (724in + 200out tokens) | -$0.000585 |
+| 2026-03-26T15:33:19 | EXPENSE | API: llama-3.3-70b-versatile (46in + 4out tokens) | -$0.000030 |
+| 2026-03-26T15:33:55 | EXPENSE | API: llama-3.3-70b-versatile (3845in + 304out tokens) | -$0.002509 |

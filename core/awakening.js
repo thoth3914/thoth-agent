@@ -24,14 +24,14 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', 'bot', '.
 const fs    = require('fs');
 const path  = require('path');
 const https = require('https');
-const Groq  = require('groq-sdk');
+
 
 
 const { getBalanceSummaryForPrompt, trackLLMUsage, getBalanceStatus } = require('./finance-tracker');
 const { scheduleNextWake, getCycleSummary, loadState } = require('./adaptive-cycle');
 const { parseActions, executeActions }            = require('./actions');
 
-const groq       = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const { callLLM } = require('./llm');
 const BASE       = path.join(__dirname, '..');
 const BOT_TOKEN  = process.env.BOT_TOKEN;
 const CREATOR_ID = 452576610;
@@ -163,31 +163,8 @@ IDLE запрещён — у Thoth всегда есть что делать: и
 Если нечего сказать — "нет".`;
 
   try {
-    const MODEL = 'llama-3.3-70b-versatile'; // Groq Dev tier — нет TPD лимита
-
-    // ── Вспомогательная функция с fallback на 8b при rate limit ──
-    // Dev tier — нет TPD лимита, fallback только на сетевые ошибки
-    async function callGroq(messages, maxTokens = 800, temperature = 0.85) {
-      try {
-        const res = await groq.chat.completions.create({ model: MODEL, messages, max_tokens: maxTokens, temperature });
-        if (res.usage) trackLLMUsage(res.usage, MODEL);
-        return res.choices[0].message.content;
-      } catch (e) {
-        const msg = String(e.message || '');
-        // Короткий retry только на TPM (per minute) — не на TPD (per day)
-        if (msg.includes('rate_limit') && msg.includes('per minute')) {
-          console.log(`[${now()}] TPM limit, waiting 62s...`);
-          await new Promise(r => setTimeout(r, 62000));
-          const res2 = await groq.chat.completions.create({ model: MODEL, messages, max_tokens: maxTokens, temperature });
-          if (res2.usage) trackLLMUsage(res2.usage, MODEL);
-          return res2.choices[0].message.content;
-        }
-        throw e;
-      }
-    }
-
-    // ── Фаза 1: Thoth думает и планирует действия ──
-    const plan = await callGroq([
+    // ── Фаза 1: Thoth думает и планирует действия (thinking → 70b) ──
+    const plan = await callLLM('thinking', [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ]);
@@ -215,15 +192,15 @@ IDLE запрещён — у Thoth всегда есть что делать: и
         `### ${r.action}\n${r.result}`
       ).join('\n\n');
 
-      // Сжимаем результаты до 2000 символов чтобы вписаться в TPM
-      const shortResults = resultsText.slice(0, 2000);
-      finalThoughts = await callGroq([
+      // Фаза 3 синтез — Gemini Flash (дешевле, достаточно для синтеза)
+      const shortResults = resultsText.slice(0, 3000);
+      finalThoughts = await callLLM('fast', [
         { role: 'system', content: `Ты Thoth. Автономный агент. Отвечай кратко и конкретно.` },
         {
           role: 'user',
           content: `${balance}\n\nРезультаты действий:\n${shortResults}\n\nОтветь:\n1. Факты (что узнал, 2-3 предложения)\n2. Следующее действие (ACTIONS блок если нужно)\n3. KNOWLEDGE: тема | уровень | заметка (если что-то изучил)\n4. Режим: CRITICAL/ACTIVE/LEARNING/NORMAL/IDLE\n5. Стасу: что реально сделал (1 предложение)`
         },
-      ], 600, 0.7);
+      ], 600);
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
