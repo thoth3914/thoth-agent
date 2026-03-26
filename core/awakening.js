@@ -26,7 +26,7 @@ const path  = require('path');
 const https = require('https');
 const Groq  = require('groq-sdk');
 
-// identity-check загружается внутри awaken() чтобы всегда иметь свежий контекст
+
 const { getBalanceSummaryForPrompt, trackLLMUsage, getBalanceStatus } = require('./finance-tracker');
 const { scheduleNextWake, getCycleSummary, loadState } = require('./adaptive-cycle');
 const { parseActions, executeActions }            = require('./actions');
@@ -163,37 +163,24 @@ IDLE запрещён — у Thoth всегда есть что делать: и
 Если нечего сказать — "нет".`;
 
   try {
-    // Основная модель — 70b. Fallback на 8b если 70b недоступна (rate limit)
-    const MODEL = 'llama-3.3-70b-versatile';
-    const FALLBACK_MODEL = 'llama-3.1-8b-instant';
+    const MODEL = 'llama-3.3-70b-versatile'; // Groq Dev tier — нет TPD лимита
 
     // ── Вспомогательная функция с fallback на 8b при rate limit ──
-    // Умный вызов с fallback + retry на TPM лимит
-    async function callGroq(messages, maxTokens = 600, temperature = 0.85) {
-      const tryModel = async (model) => {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const res = await groq.chat.completions.create({ model, messages, max_tokens: maxTokens, temperature });
-            if (res.usage) trackLLMUsage(res.usage, model);
-            return res.choices[0].message.content;
-          } catch (e) {
-            const msg = String(e.message || '');
-            if (msg.includes('rate_limit') && msg.includes('per minute') && attempt === 0) {
-              // TPM limit — ждём 65 секунд и пробуем ещё раз
-              console.log(`[${now()}] TPM limit on ${model}, waiting 65s...`);
-              await new Promise(r => setTimeout(r, 65000));
-              continue;
-            }
-            throw e;
-          }
-        }
-      };
+    // Dev tier — нет TPD лимита, fallback только на сетевые ошибки
+    async function callGroq(messages, maxTokens = 800, temperature = 0.85) {
       try {
-        return await tryModel(MODEL);
+        const res = await groq.chat.completions.create({ model: MODEL, messages, max_tokens: maxTokens, temperature });
+        if (res.usage) trackLLMUsage(res.usage, MODEL);
+        return res.choices[0].message.content;
       } catch (e) {
-        if (String(e.message).includes('rate_limit')) {
-          console.log(`[${now()}] 70b unavailable, trying 8b...`);
-          return await tryModel(FALLBACK_MODEL);
+        const msg = String(e.message || '');
+        // Короткий retry только на TPM (per minute) — не на TPD (per day)
+        if (msg.includes('rate_limit') && msg.includes('per minute')) {
+          console.log(`[${now()}] TPM limit, waiting 62s...`);
+          await new Promise(r => setTimeout(r, 62000));
+          const res2 = await groq.chat.completions.create({ model: MODEL, messages, max_tokens: maxTokens, temperature });
+          if (res2.usage) trackLLMUsage(res2.usage, MODEL);
+          return res2.choices[0].message.content;
         }
         throw e;
       }
@@ -281,9 +268,7 @@ IDLE запрещён — у Thoth всегда есть что делать: и
   } catch (e) {
     console.error(`[${now()}] Awakening error:`, e.message);
     append(path.join(BASE, 'memory', `${today()}.md`), `\n## Ошибка цикла — ${now()}\n${e.message}\n`);
-    // Rate limit — ждём сброса, но не 2 часа
-    const isRateLimit = String(e.message).includes('rate_limit') || String(e.message).includes('429');
-    scheduleNextWake(isRateLimit ? 'RATE_LIMIT' : 'ACTIVE', null, `Error: ${e.message.slice(0, 60)}`);
+    scheduleNextWake('ACTIVE', null, `Error in cycle, retry soon: ${e.message.slice(0, 60)}`);
   }
 }
 

@@ -24,3 +24,9 @@
 → 4393 chars via jina
 [2026-03-26T15:24:24.189Z] ACTION ✓ updateKnowledge: OpenClaw → ГАП
 → Экосистема скиллов для агентов и маркетплейс ClawHub
+[2026-03-26T15:27:02.442Z] ACTION ✓ search: ClawHub OpenClaw skills ecosystem
+→ 5 results via brave
+[2026-03-26T15:27:04.833Z] ACTION ✓ fetch: https://clawhub.com/docs
+→ 319 chars via jina
+[2026-03-26T15:27:04.833Z] ACTION ✗ read: memory/OpenClaw_ClawHub.md
+→ ENOENT: no such file or directory, open '/home/openclaw/.openclaw/workspace/thoth/memory/OpenClaw_ClawHub.md'

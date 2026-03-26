@@ -1,9 +1,9 @@
 {
   "mode": "LEARNING",
-  "nextWakeAt": "2026-03-26T15:49:25.826Z",
-  "lastWakeAt": "2026-03-26T15:24:25.826Z",
-  "currentTask": "Узнал, что OpenClaw имеет документацию по навыкам (skills) и",
-  "cycleCount": 14,
-  "totalCyclesCost": 0.02800000000000001,
+  "nextWakeAt": "2026-03-26T15:52:05.613Z",
+  "lastWakeAt": "2026-03-26T15:27:05.613Z",
+  "currentTask": "Узнал, что ClawHub - это публичный реестр навыков для агенто",
+  "cycleCount": 15,
+  "totalCyclesCost": 0.030000000000000013,
   "lastReasoning": "Auto-selected after cycle analysis"
 }
