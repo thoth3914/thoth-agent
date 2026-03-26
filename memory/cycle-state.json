@@ -1,0 +1,9 @@
+{
+  "mode": "ACTIVE",
+  "nextWakeAt": "2026-03-26T14:44:05.246Z",
+  "lastWakeAt": "2026-03-26T13:59:05.246Z",
+  "currentTask": "2. ПРИОРИТЕТНОЕ ДЕЙСТВИЕ",
+  "cycleCount": 2,
+  "totalCyclesCost": 0.004,
+  "lastReasoning": "Auto-selected based on cycle analysis"
+}

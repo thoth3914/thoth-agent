@@ -27,3 +27,5 @@
 ## Доходы по проектам
 
 _Пусто — только начал_
+| 2026-03-26T13:58:34 | EXPENSE | API: llama-3.3-70b-versatile (4948in + 605out tokens) | -$0.003397 |
+| 2026-03-26T13:59:05 | EXPENSE | API: llama-3.3-70b-versatile (5614in + 561out tokens) | -$0.003755 |
