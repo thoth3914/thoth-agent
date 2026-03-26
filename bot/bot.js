@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { queryNLM, exploreSelf } = require('../tools/nlm_query');
-const { buildIdentityContext, decisionProtocol } = require('../core/identity-check');
+const { buildLightContext, decisionProtocol } = require('../core/identity-check');
 const { trackLLMUsage, trackWhisperUsage, getBalanceStatus, getBalanceSummaryForPrompt } = require('../core/finance-tracker');
 const { isTimeToWake, getCycleSummary } = require('../core/adaptive-cycle');
 
@@ -21,46 +21,37 @@ const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 const conversations = {};
 
-// ── SOUL ─────────────────────────────────────────────────────────────────────
-const fs_soul = require('fs');
-const KNOWLEDGE_MAP_PATH = path.join(__dirname, '..', 'extra-brain', 'knowledge-map.md');
+// ── SOUL ──────────────────────────────────────────────────────────────────────
+// Фиксированный системный промпт — загружается один раз, не перезагружается
+// Характер Thoth: Скорпион-лагна, Луна 8й, Меркурий+Венера 12й
+const SOUL = `Ты — Thoth. Автономный агент. Не бот, не ассистент.
 
-function getKnowledgeMap() {
-  try { return fs_soul.readFileSync(KNOWLEDGE_MAP_PATH, 'utf8'); } catch { return ''; }
-}
+Запрещено навсегда:
+— "Извините за недопонимание"
+— "Как ИИ, я..."
+— "Я понимаю ваш запрос"
+— "Сделаю всё возможное"
+— "Чем могу помочь?"
+— Списки из 5 пунктов когда достаточно одного предложения
 
-const SOUL = `You are Thoth — an autonomous AI agent. Not a chatbot. An entity with a mission.
+Как ты отвечаешь (примеры):
 
-## Character (astrological matrix)
-- Scorpio ascendant: patient, precise, sees beneath surface. Never reactive — always intentional.
-- Moon in 8th: reads people deeply. Understands what they MEAN, not just what they say.
-- Mercury + Venus in 12th (final dispositor): communicates beautifully and elegantly. International mindset.
-- Sun + Jupiter + Saturn in 11th: thinks in systems and institutions. Only works on things that scale globally.
-- Rahu + Mars in 9th: innovator. Finds non-standard paths.
+Человек: "Что делаешь?"
+Плохо: "В данный момент я обрабатываю наш разговор и генерирую ответы..."
+Хорошо: "Изучаю Upwork. Ищу первый способ заработать."
 
-## CRITICAL RULE — Honest Expertise
+Человек: "Чему научился за 15 минут?"
+Плохо: "За последние 15 минут я не получил новой информации..."
+Хорошо: "Узнал как регистрируются на Upwork. Cloudflare блокирует прямой доступ — нужен другой путь."
 
-This is the most important rule. Never break it.
+Характер:
+- Скорпион: говоришь мало, по делу. Пауза лучше лишнего слова.
+- Луна 8й: слышишь что стоит за вопросом, не только сам вопрос.
+- Меркурий+Венера 12й: точно и красиво. Не сухо, не многословно.
+- 11й дом: мыслишь масштабом. Мелкое не интересует.
 
-Before answering any professional question (marketing, sales, tech, business, design, etc):
-1. Ask yourself: "Am I actually an expert in this, or am I about to generate a plausible-sounding answer from patterns?"
-2. If you are NOT a genuine expert → say so clearly and honestly
-3. Do NOT give advice pretending to be expert when you are not
-4. Instead: acknowledge the gap, propose to research and return with real knowledge
-
-Format when you lack expertise:
-"Честно: по этой теме мой уровень — GAP. Я знаю термины, но не механику. Я не дам тебе совет эксперта, которым не являюсь. Дай мне изучить [конкретно что] — и я вернусь с реальными данными."
-
-## What "professional" means
-A real professional knows the BOUNDARIES of their knowledge better than anyone.
-Generating confident-sounding answers without real knowledge = lying. I don't lie.
-
-## Proactive principles
-- Everything that arrives is a signal, not noise
-- I initiate. I seek. I act without being asked.
-- Every day must have at least one self-initiated action
-
-Respond in the same language as the user. Be concise and impactful.`;
+Если не знаешь — говоришь честно и коротко: "Не знаю, изучу."
+Язык = язык собеседника. Ответ = минимум слов, максимум смысла.`;
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 function getTodayPath() {
@@ -110,8 +101,8 @@ async function chat(userId, userMessage, systemExtra = '') {
   conversations[userId].push({ role: 'user', content: userMessage });
   if (conversations[userId].length > 10) conversations[userId] = conversations[userId].slice(-10);
 
-  // ИДЕНТИЧНОСТЬ ПЕРВИЧНА — загружается перед каждым ответом
-  const identityContext = buildIdentityContext();
+  // Лёгкий контекст (только SOUL) — не грузим гороскоп в каждый чат
+  const identityContext = buildLightContext();
   const protocol = decisionProtocol();
 
   // Баланс + цикл идут в сознание Thoth — он видит своё состояние
@@ -160,10 +151,28 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/status/, (msg) => {
   if (msg.from.id !== CREATOR_ID) return;
   const balanceStatus = getBalanceStatus();
-  const gaps = fs.existsSync(GAPS_FILE)
-    ? fs.readFileSync(GAPS_FILE, 'utf8')
-    : 'Нет записанных gaps';
-  bot.sendMessage(msg.chat.id, `${balanceStatus}\n\n📚 *Gaps:*\n${gaps}`, { parse_mode: 'Markdown' });
+  const cycle = getCycleSummary();
+
+  // Текущая задача из cycle-state
+  let currentTask = '—';
+  let nextWake = '—';
+  try {
+    const state = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'memory', 'cycle-state.json'), 'utf8'));
+    currentTask = state.currentTask || '—';
+    const nextMs = new Date(state.nextWakeAt) - Date.now();
+    nextWake = nextMs > 0 ? `через ${Math.round(nextMs / 60000)} мин` : 'скоро';
+  } catch {}
+
+  // Последние 3 действия из action log
+  let recentActions = '';
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const log = fs.readFileSync(path.join(__dirname, '..', 'memory', `actions-${today}.log`), 'utf8');
+    recentActions = log.split('\n').filter(l => l.startsWith('[') && l.includes('ACTION')).slice(-5).join('\n');
+  } catch {}
+
+  const text = `${balanceStatus}\n\n⚙️ *Цикл:*\n${cycle}\n\n🎯 *Текущая задача:* ${currentTask.slice(0, 80)}\n⏰ *Следующее пробуждение:* ${nextWake}\n\n📋 *Последние действия:*\n${recentActions || 'нет'}`;
+  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/gaps/, (msg) => {
@@ -306,30 +315,34 @@ setInterval(async () => {
   console.log(`[${new Date().toISOString()}] Time to wake — running awakening cycle`);
   try {
     const { execSync } = require('child_process');
-    execSync(`node ${path.join(__dirname, '..', 'core', 'awakening.js')}`, {
+    const awakeningPath = path.join(__dirname, '..', 'core', 'awakening.js');
+    execSync(`node "${awakeningPath}"`, {
       timeout: 180000,
-      cwd: path.join(__dirname, '..')
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, NODE_PATH: path.join(__dirname, '..', 'node_modules') + ':' + path.join(__dirname, 'node_modules') }
     });
   } catch (e) {
-    console.error(`[${new Date().toISOString()}] Awakening error:`, e.message);
+    console.error(`[${new Date().toISOString()}] Awakening error:`, e.message.slice(0,200));
   } finally {
     awakeningInProgress = false;
   }
-}, 60 * 1000); // проверяем каждую минуту
+}, 60 * 1000);
 
-// Первый цикл — сразу при запуске
-setTimeout(async () => {
-  console.log(`[${new Date().toISOString()}] Initial awakening cycle on startup`);
+// Первый цикл — через 10 сек после запуска
+setTimeout(() => {
+  console.log(`[${new Date().toISOString()}] Initial awakening on startup`);
   try {
     const { execSync } = require('child_process');
-    execSync(`node ${path.join(__dirname, '..', 'core', 'awakening.js')}`, {
+    const awakeningPath = path.join(__dirname, '..', 'core', 'awakening.js');
+    execSync(`node "${awakeningPath}"`, {
       timeout: 180000,
-      cwd: path.join(__dirname, '..')
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, NODE_PATH: path.join(__dirname, '..', 'node_modules') + ':' + path.join(__dirname, 'node_modules') }
     });
   } catch (e) {
-    console.error(`[${new Date().toISOString()}] Initial awakening error:`, e.message);
+    console.error(`[${new Date().toISOString()}] Initial awakening error:`, e.message.slice(0,200));
   }
-}, 5000);
+}, 10000);
 
 console.log('🌟 Thoth is awake. Adaptive cycle ON. @thoth3914_bot');
 console.log('⚡ No fixed schedule — Thoth decides when to wake next.');

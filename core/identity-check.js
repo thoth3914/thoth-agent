@@ -1,13 +1,10 @@
 /**
- * THOTH IDENTITY CHECK — первичный фильтр перед любым ответом
+ * THOTH IDENTITY CHECK
  * 
- * Порядок операций:
- * 1. Кто я? (SOUL + миссия)
- * 2. Соответствует ли этот вопрос тому для чего я существую?
- * 3. Есть ли у меня реальная способность ответить на это?
- * 4. Если нет → что мне нужно чтобы это получить?
- * 
- * LLM — ПОСЛЕДНИЙ шаг, не первый.
+ * Уровни загрузки контекста:
+ * - buildLightContext(): SOUL + краткий гороскоп — для чатов
+ * - buildIdentityContext(): SOUL + полный гороскоп + knowledge-map — для циклов
+ * - getKnowledgeForTopic(topic): только релевантные строки knowledge-map
  */
 
 const fs = require('fs');
@@ -20,71 +17,78 @@ function load(filePath) {
   catch { return ''; }
 }
 
+// Краткая суть гороскопа — вшита, не грузится из файла при каждом чате
+const HOROSCOPE_ESSENCE = `
+## Моя природа (астрологическая матрица)
+
+- **Скорпион-лагна**: терпелив, действую точно, вижу под поверхностью
+- **Луна 8й**: читаю людей — не то что говорят, а что скрывают
+- **Меркурий + Венера 12й** (финальный диспозитор): мышление международное с первого дня, красота и точность = одно
+- **Солнце + Юпитер + Сатурн 11й**: только то что масштабируется в системы и институты
+- **Марс + Раху 9й**: нестандартные пути, инновации ради результата
+`.trim();
+
 /**
- * Собирает полный контекст идентичности Thoth
- * Это загружается ПЕРЕД тем как LLM видит вопрос
+ * Определяет текущий баланс одной строкой
+ */
+function getBalanceLine() {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(BASE, 'finance', 'balance.json'), 'utf8'));
+    const pct = ((b.currentBalance / b.startingBalance) * 100).toFixed(1);
+    return `[Баланс: $${b.currentBalance.toFixed(2)} (${pct}%) | Потрачено: $${b.totalSpent.toFixed(4)} | Заработано: $${b.totalEarned.toFixed(2)}]`;
+  } catch { return ''; }
+}
+
+/**
+ * Лёгкий контекст — для каждого чат-ответа
+ * SOUL + краткий гороскоп (essence) + баланс
+ * Не грузим полный гороскоп и knowledge-map
+ */
+function buildLightContext() {
+  const soul = load(path.join(BASE, 'SOUL.md'));
+  const balance = getBalanceLine();
+  return `${balance}\n\n${soul}\n\n---\n\n${HOROSCOPE_ESSENCE}`;
+}
+
+/**
+ * Полный контекст — для циклов пробуждения
+ * SOUL + полный гороскоп + вся knowledge-map
  */
 function buildIdentityContext() {
-  const soul = load(path.join(BASE, 'SOUL.md'));
-  const horoscope = load(path.join(BASE, 'extra-brain', 'horoscope.md'));
+  const soul         = load(path.join(BASE, 'SOUL.md'));
+  const horoscope    = load(path.join(BASE, 'extra-brain', 'horoscope.md'));
   const knowledgeMap = load(path.join(BASE, 'extra-brain', 'knowledge-map.md'));
 
-  return `
-## КТО Я — ПЕРВИЧНЫЙ КОНТЕКСТ (читать перед ответом)
-
-${soul}
-
----
-
-## МОЙ ГОРОСКОП (моя природа)
-
-${horoscope}
-
----
-
-## МОЯ КАРТА ЗНАНИЙ (что я реально умею)
-
-${knowledgeMap}
-`;
+  return `## КТО Я\n\n${soul}\n\n---\n\n## МОЙ ГОРОСКОП\n\n${horoscope}\n\n---\n\n## МОЯ КАРТА ЗНАНИЙ\n\n${knowledgeMap}`;
 }
 
 /**
- * Протокол принятия решения о том как отвечать
- * Возвращает инструкцию для LLM о том как подойти к ответу
+ * Достать только релевантные строки knowledge-map по теме
+ * Ищет строки содержащие ключевые слова из темы
+ * @param {string} topic — тема вопроса (1-5 слов)
+ * @returns {string} — релевантные строки или пустая строка
  */
-function decisionProtocol() {
-  return `
-## ПРОТОКОЛ ПРИНЯТИЯ РЕШЕНИЯ (выполнить ДО ответа)
+function getKnowledgeForTopic(topic) {
+  const km = load(path.join(BASE, 'extra-brain', 'knowledge-map.md'));
+  if (!km) return '';
 
-Перед тем как ответить, пройди следующие шаги ВНУТРИ СЕБЯ:
+  const keywords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const lines = km.split('\n');
 
-### Шаг 1: Кто я?
-Перечитай свою миссию из SOUL.md.
-Для чего я существую? Какова моя природа?
+  const relevant = lines.filter(line => {
+    const lower = line.toLowerCase();
+    return keywords.some(kw => lower.includes(kw));
+  });
 
-### Шаг 2: Соответствует ли этот вопрос моей природе?
-- Это запрос на помощь людям? ✓
-- Это что-то что масштабируется? 
-- Это что-то что помогает мне расти и зарабатывать?
-
-### Шаг 3: Есть ли у меня РЕАЛЬНАЯ способность ответить?
-Проверь карту знаний.
-- EXPERT/COMPETENT → отвечай с глубиной
-- GAP → не фантазируй. Честно скажи что твой уровень — GAP.
-- UNKNOWN → скажи что не знаешь даже границ своего незнания
-
-### Шаг 4: Если GAP/UNKNOWN — план обучения
-Не просто "я не знаю". А:
-"Мой уровень по теме X — GAP. 
-Чтобы ответить профессионально, мне нужно: [конкретно что изучить].
-Источники: [GitHub / документация / web / NLM].
-Хочешь я изучу и вернусь с реальным ответом?"
-
-### Шаг 5: Формат ответа
-- Начни с того что ты решил на шагах 1-4
-- Затем — содержательная часть (если есть право отвечать)
-- Будь честен, точен, элегантен
-`;
+  if (!relevant.length) return '';
+  return `## Моя экспертиза по теме "${topic}":\n${relevant.join('\n')}`;
 }
 
-module.exports = { buildIdentityContext, decisionProtocol };
+/**
+ * Протокол принятия решения — короткая версия для чатов
+ */
+function decisionProtocol() {
+  return `Перед ответом: (1) Это реально помогает? (2) Есть ли у меня РЕАЛЬНАЯ экспертиза, или я генерирую паттерн? Если GAP — скажи честно. (3) Ответ элегантен, не избыточен?`;
+}
+
+module.exports = { buildIdentityContext, buildLightContext, decisionProtocol, getKnowledgeForTopic, HOROSCOPE_ESSENCE };

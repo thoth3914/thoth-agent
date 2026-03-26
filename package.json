@@ -11,6 +11,8 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^17.3.1",
-    "groq-sdk": "^1.1.2"
+    "groq-sdk": "^1.1.2",
+    "node-schedule": "^2.1.1",
+    "node-telegram-bot-api": "^0.67.0"
   }
 }

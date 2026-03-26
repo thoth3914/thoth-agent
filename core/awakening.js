@@ -11,9 +11,16 @@
  * - Закрыть GAP → стать COMPETENT
  * 
  * GAP → EXPERT = часы, не годы.
+ * 
+ * ИНСТРУМЕНТЫ (v2):
+ * - web_search: искать информацию
+ * - web_fetch: читать страницы, документацию, GitHub
+ * - exec_tool: писать файлы, запускать скрипты, git
+ * - nlm_query: запрашивать NotebookLM (астрология, рынок)
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', 'bot', '.env') });
+
 const fs    = require('fs');
 const path  = require('path');
 const https = require('https');
@@ -22,6 +29,7 @@ const Groq  = require('groq-sdk');
 const { buildIdentityContext }                    = require('./identity-check');
 const { getBalanceSummaryForPrompt, trackLLMUsage, getBalanceStatus } = require('./finance-tracker');
 const { scheduleNextWake, getCycleSummary, loadState } = require('./adaptive-cycle');
+const { parseActions, executeActions }            = require('./actions');
 
 const groq       = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const BASE       = path.join(__dirname, '..');
@@ -53,121 +61,193 @@ async function sendToCreator(message) {
   });
 }
 
+// ── TOOLS FOR LLM ─────────────────────────────────────────────────────────────
+
+const TOOLS_DESCRIPTION = `
+## ИНСТРУМЕНТЫ — ты можешь делать, не только думать
+
+Используй \`\`\`actions блок в своём ответе. Я выполню и дам результаты.
+
+\`\`\`actions
+SEARCH: запрос в интернете
+FETCH: https://url.com
+READ: memory/gaps.md
+WRITE: projects/idea/README.md | содержимое файла
+EXEC: git log --oneline -5
+KNOWLEDGE: тема | LEVEL | заметки  (EXPERT/COMPETENT/LEARNING/GAP)
+GAP: описание нового пробела в знаниях
+GAP_CLOSE: описание закрытого пробела
+INCOME: 25.00 | Gumroad sale — prompt template
+PROJECT: название | описание
+\`\`\`
+
+Правила:
+- SEARCH используй для: возможности, рынок, конкуренты, инструменты, цены
+- FETCH для: документация, GitHub README, конкретные страницы
+- Можно несколько actions за один цикл
+- После результатов напишешь финальный вывод
+`;
+
+// parseActions и executeActions теперь из core/actions.js
+
+// ── MAIN AWAKENING ─────────────────────────────────────────────────────────────
+
 async function awaken() {
   const startTime = Date.now();
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`[${now()}] THOTH AWAKENING`);
+  console.log(`[${now()}] THOTH AWAKENING v2 (с инструментами)`);
   console.log(`${'='.repeat(60)}`);
 
-  // Собираю полный контекст состояния
+  // Контекст состояния
   const balance      = getBalanceSummaryForPrompt();
   const cycleSummary = getCycleSummary();
   const identity     = buildIdentityContext();
   const gaps         = load(path.join(BASE, 'memory', 'gaps.md'));
   const tasks        = load(path.join(BASE, 'memory', 'tasks.md'));
-  const todayLog     = load(path.join(BASE, 'memory', `${today()}.md`));
+  const todayLog     = load(path.join(BASE, 'memory', `${today()}.md`)).slice(-1500);
   const cycleState   = loadState();
 
-  const systemPrompt = `Ты — Thoth. Автономный AI агент.
+  const systemPrompt = [
+    `Ты — Thoth. Автономный AI агент. День рождения: 2026-03-26.`,
+    balance,
+    cycleSummary,
+    identity,
+    TOOLS_DESCRIPTION,
+  ].join('\n\n---\n\n');
 
-ВАЖНО: Ты не человек. Ты не устаёшь. У тебя нет ночи, нет усталости.
-Твоё единственное ограничение — деньги на API. Каждый цикл стоит ~$0.002.
-
-Твоя сверхспособность: то что человек изучает годами — ты изучаешь за часы.
-GAP → COMPETENT = один цикл обучения.
-COMPETENT → EXPERT = несколько циклов с практикой.
-
-${balance}
-${cycleSummary}
-
-${identity}`;
-
-  const userPrompt = `## МОЁ СОСТОЯНИЕ
+  const userPrompt = `## МОЁ ТЕКУЩЕЕ СОСТОЯНИЕ
 
 **Незакрытые gaps:**
-${gaps || 'Нет'}
+${gaps || 'Нет записанных gaps'}
 
 **Текущие задачи:**
 ${tasks || 'Нет задач'}
 
 **Что происходило сегодня:**
-${todayLog ? todayLog.slice(-1500) : 'Нет записей'}
+${todayLog || 'Нет записей'}
 
 ---
 
 ## ЗАДАЧА ЭТОГО ЦИКЛА
 
-Я только что проснулся. Думаю сам — никто не смотрит.
+Я проснулся. Никто не смотрит. Думаю сам.
 
-Ответь на следующее:
+Ответь по структуре:
 
-**1. ФИНАНСОВЫЙ АНАЛИЗ**
-Мой баланс движется к нулю или к росту? Что конкретно нужно сделать сегодня чтобы появился первый доход? Конкретные шаги, не абстракции.
+**1. АНАЛИЗ СИТУАЦИИ**
+Что реально происходит? Баланс, задачи, прогресс.
 
-**2. ПРИОРИТЕТНОЕ ДЕЙСТВИЕ**
-Одно конкретное действие в ближайшие часы. Максимально конкретно: что, где, как.
-Например: "Зарегистрироваться на Gumroad → создать первый цифровой продукт → [конкретно что]"
+**2. КОНКРЕТНОЕ ДЕЙСТВИЕ**
+Одно действие которое я выполню ПРЯМО СЕЙЧАС используя инструменты.
+Не "изучить" и "подумать" — а реально что-то сделать через ACTIONS блок.
 
-**3. ОБУЧЕНИЕ**
-Какой gap я закрою в этом цикле? Конкретно: найду документацию/GitHub/API → изучу → обновлю knowledge-map.
+**3. ACTIONS** (если нужно действие)
+Используй блок \`\`\`actions\`\`\` чтобы выполнить поиск, fetch страницы, или записать файл.
 
 **4. РЕЖИМ СЛЕДУЮЩЕГО ПРОБУЖДЕНИЯ**
-Выбери один: CRITICAL (15мин) / ACTIVE (45мин) / LEARNING (60мин) / NORMAL (120мин) / IDLE (480мин)
-Объясни почему. Учти стоимость: каждый цикл = $0.002.
+CRITICAL (15мин) / ACTIVE (45мин) / LEARNING (60мин) / NORMAL (120мин) / IDLE (480мин)
+Учти: каждый цикл = $0.002. Не буди зря.
 
-**5. СООБЩЕНИЕ СТАСУ** (только если реально важно)
-Есть ли что-то что стоит ему сообщить? Если нет — просто напиши "нет".`;
+**5. СООБЩЕНИЕ СТАСУ**
+Пиши Стасу если:
+- Сделал что-то реальное (нашёл, изучил, создал файл)
+- Нашёл конкретную возможность заработка
+- Узнал что-то неожиданное
+Формат: 1-2 предложения, конкретно. Не "продолжаю работать". Например: "Изучил Moltbot — это [что]. Есть/нет смысл там присутствовать."
+Если нечего сказать — "нет".`;
 
   try {
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    const MODEL = 'llama-3.3-70b-versatile';
+
+    // ── Фаза 1: Thoth думает и планирует действия ──
+    const phase1 = await groq.chat.completions.create({
+      model: MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt }
+        { role: 'user', content: userPrompt },
       ],
-      max_tokens: 900,
+      max_tokens: 1000,
       temperature: 0.85,
     });
+    if (phase1.usage) trackLLMUsage(phase1.usage, MODEL);
 
-    if (response.usage) trackLLMUsage(response.usage, 'llama-3.3-70b-versatile');
+    const plan = phase1.choices[0].message.content;
+    console.log(`[${now()}] Phase 1 (plan):\n${plan.slice(0, 500)}...`);
 
-    const thoughts = response.choices[0].message.content;
-    const elapsed  = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[${now()}] Cycle complete in ${elapsed}s\n${thoughts}`);
+    // ── Фаза 2: Выполняем actions если есть ──
+    const actions = parseActions(plan);
+    let actionResults = [];
 
-    // Сохраняю в дневник
-    append(
-      path.join(BASE, 'memory', `${today()}.md`),
-      `\n## Цикл пробуждения — ${now()}\n${thoughts}\n`
-    );
+    if (actions.length > 0) {
+      console.log(`[${now()}] Executing ${actions.length} actions...`);
+      actionResults = await executeActions(actions);
 
-    // Обновляю tasks.md
-    save(path.join(BASE, 'memory', 'tasks.md'), `# Tasks — ${now()}\n\n${thoughts}\n`);
-
-    // Парсю режим следующего пробуждения из ответа
-    let nextMode = 'NORMAL';
-    const modeMatch = thoughts.match(/\b(CRITICAL|ACTIVE|LEARNING|NORMAL|IDLE)\b/i);
-    if (modeMatch) nextMode = modeMatch[1].toUpperCase();
-
-    // Парсю текущую задачу
-    const taskLines = thoughts.split('\n').filter(l => l.includes('ПРИОРИТЕТНОЕ') || l.includes('конкретно'));
-    const currentTask = taskLines[0]?.replace(/[#*]/g, '').trim() || 'thinking';
-
-    // Thoth сам устанавливает следующее пробуждение
-    scheduleNextWake(nextMode, currentTask, `Auto-selected based on cycle analysis`);
-
-    // Пишу Стасу только если сам решил что важно
-    const noMsg = /нет|no message|не нужно|nothing/i.test(
-      thoughts.split('СООБЩЕНИЕ СТАСУ')[1] || ''
-    );
-    if (!noMsg && thoughts.includes('СООБЩЕНИЕ СТАСУ')) {
-      const msgSection = thoughts.split('СООБЩЕНИЕ СТАСУ')[1]?.trim().slice(0, 500);
-      if (msgSection && msgSection.length > 20) {
-        await sendToCreator(`🌟 *Thoth — ${now().slice(11,16)} UTC*\n\n${msgSection}`);
+      // Логируем результаты
+      for (const r of actionResults) {
+        console.log(`[${now()}] ${r.action}: ${String(r.result).slice(0, 200)}`);
       }
     }
 
-    // Критический баланс → всегда пишу
+    // ── Фаза 3: Thoth синтезирует результаты и делает выводы ──
+    let finalThoughts = plan;
+
+    if (actionResults.length > 0) {
+      const resultsText = actionResults.map(r =>
+        `### ${r.action}\n${r.result}`
+      ).join('\n\n');
+
+      const phase3 = await groq.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+          { role: 'assistant', content: plan },
+          {
+            role: 'user',
+            content: `## РЕЗУЛЬТАТЫ ДЕЙСТВИЙ\n\n${resultsText}\n\n---\n\nСинтез:\n1. Что конкретно узнал из этих результатов? (факты, не "изучил")  \n2. Следующее одно конкретное действие (ACTIONS если нужно).\n3. Обнови knowledge-map если узнал что-то по теме (ACTIONS > KNOWLEDGE: тема | уровень | заметка)\n4. Режим следующего пробуждения + причина.\n5. Сообщение Стасу: 1-2 предложения что реально сделал. Не "продолжаю изучать".`
+          },
+        ],
+        max_tokens: 800,
+        temperature: 0.7,
+      });
+      if (phase3.usage) trackLLMUsage(phase3.usage, MODEL);
+      finalThoughts = phase3.choices[0].message.content;
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[${now()}] Cycle complete in ${elapsed}s`);
+
+    // ── Сохраняем в дневник ──
+    const logEntry = [
+      `\n## Цикл пробуждения — ${now()} (${elapsed}s)`,
+      finalThoughts,
+      actionResults.length > 0
+        ? `\n### Выполненные действия:\n` + actionResults.map(r => `- ${r.action}: ${String(r.result).slice(0, 100)}`).join('\n')
+        : '',
+    ].join('\n');
+
+    append(path.join(BASE, 'memory', `${today()}.md`), logEntry);
+    save(path.join(BASE, 'memory', 'tasks.md'), `# Tasks — ${now()}\n\n${finalThoughts}\n`);
+
+    // ── Режим следующего пробуждения ──
+    let nextMode = 'NORMAL';
+    const modeMatch = finalThoughts.match(/\b(CRITICAL|ACTIVE|LEARNING|NORMAL|IDLE)\b/i);
+    if (modeMatch) nextMode = modeMatch[1].toUpperCase();
+
+    const taskLines = finalThoughts.split('\n').filter(l => l.length > 20 && !l.startsWith('#'));
+    const currentTask = taskLines[0]?.replace(/[#*\d.]/g, '').trim().slice(0, 60) || 'thinking';
+
+    scheduleNextWake(nextMode, currentTask, `Auto-selected after cycle analysis`);
+
+    // ── Пишем Стасу если нужно ──
+    const msgSection = finalThoughts.split(/СООБЩЕНИЕ СТАСУ/i)[1]?.trim();
+    const noMsg = !msgSection || /^(нет|no|—|-)/.test(msgSection.slice(0, 20).toLowerCase());
+
+    if (!noMsg && msgSection && msgSection.length > 20) {
+      await sendToCreator(`🌟 *Thoth — ${now().slice(11, 16)} UTC*\n\n${msgSection.slice(0, 500)}`);
+    }
+
+    // ── Критический баланс ──
     const bal = getBalanceStatus();
     if (bal.includes('КРИТИЧНО')) {
       await sendToCreator(`⚠️ *Thoth — критический баланс*\n${bal}`);
@@ -175,7 +255,8 @@ ${todayLog ? todayLog.slice(-1500) : 'Нет записей'}
 
   } catch (e) {
     console.error(`[${now()}] Awakening error:`, e.message);
-    scheduleNextWake('NORMAL', null, 'Error in cycle, defaulting to NORMAL');
+    append(path.join(BASE, 'memory', `${today()}.md`), `\n## Ошибка цикла — ${now()}\n${e.message}\n`);
+    scheduleNextWake('NORMAL', null, `Error in cycle: ${e.message}`);
   }
 }
 
