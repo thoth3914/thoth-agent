@@ -1,9 +1,9 @@
 {
-  "mode": "CRITICAL",
-  "nextWakeAt": "2026-03-26T15:43:55.006Z",
-  "lastWakeAt": "2026-03-26T15:33:55.006Z",
-  "currentTask": "Мой баланс составляет $, изначально был $ За время работы я ",
-  "cycleCount": 16,
-  "totalCyclesCost": 0.032000000000000015,
+  "mode": "ACTIVE",
+  "nextWakeAt": "2026-03-26T16:25:00.502Z",
+  "lastWakeAt": "2026-03-26T16:05:00.502Z",
+  "currentTask": "Сейчас у меня есть несколько незакрытых gaps, включая изучен",
+  "cycleCount": 18,
+  "totalCyclesCost": 0.03600000000000002,
   "lastReasoning": "Auto-selected after cycle analysis"
 }

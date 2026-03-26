@@ -26,12 +26,24 @@ const google = process.env.GOOGLE_API_KEY
   ? new GoogleGenerativeAI(process.env.GOOGLE_API_KEY)
   : null;
 
+// OpenAI ключ через OpenClaw platform (доступны Claude модели)
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  try {
+    const OpenAI = require('openai');
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  } catch {}
+}
+
 // Доступные модели
 const MODELS = {
   groq_70b:      'llama-3.3-70b-versatile',
   groq_8b:       'llama-3.1-8b-instant',
-  gemini_flash:  'gemini-2.0-flash',
-  gemini_pro:    'gemini-1.5-pro',
+  gemini_flash:  'gemini-2.5-flash',   // актуальная версия (2.0 устарела)
+  gemini_pro:    'gemini-2.5-pro',
+  // OpenAI ключ — это OpenClaw platform router (Claude модели)
+  claude_haiku:  'claude-haiku-4-5',
+  claude_sonnet: 'claude-sonnet-4-6',
 };
 
 /**
@@ -74,8 +86,8 @@ async function callGemini(model, messages, maxTokens = 800) {
     ? `${systemMsg.content}\n\n${lastMsg}`
     : lastMsg;
 
-  const chat = geminiModel.startChat({ history });
-  const result = await chat.sendMessage(fullPrompt);
+  // Gemini startChat может не работать со всеми версиями SDK — используем generateContent напрямую
+  const result = await geminiModel.generateContent(fullPrompt);
   const text = result.response.text();
 
   // Приблизительный подсчёт токенов для billing

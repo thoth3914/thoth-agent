@@ -57,3 +57,7 @@ _Пусто — только начал_
 | 2026-03-26T15:27:05 | EXPENSE | API: llama-3.3-70b-versatile (724in + 200out tokens) | -$0.000585 |
 | 2026-03-26T15:33:19 | EXPENSE | API: llama-3.3-70b-versatile (46in + 4out tokens) | -$0.000030 |
 | 2026-03-26T15:33:55 | EXPENSE | API: llama-3.3-70b-versatile (3845in + 304out tokens) | -$0.002509 |
+| 2026-03-26T15:44:53 | EXPENSE | API: llama-3.3-70b-versatile (3950in + 378out tokens) | -$0.002629 |
+| 2026-03-26T15:44:54 | EXPENSE | API: llama-3.3-70b-versatile (239in + 171out tokens) | -$0.000276 |
+| 2026-03-26T16:04:43 | EXPENSE | API: gemini/gemini-2.5-flash (9in + 1out tokens) | -$0.000006 |
+| 2026-03-26T16:05:00 | EXPENSE | API: llama-3.3-70b-versatile (3842in + 291out tokens) | -$0.002497 |
