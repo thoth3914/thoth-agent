@@ -18,3 +18,9 @@
 → 5000 chars via jina
 [2026-03-26T15:21:50.718Z] ACTION ✓ updateKnowledge: OpenClaw → COMPETENT
 → экосистема скиллов для агентов, маркетплейс ClawHub, плагины и инструменты для управления скиллами
+[2026-03-26T15:24:23.906Z] ACTION ✓ fetch: https://docs.openclaw.ai/skills
+→ 5000 chars via jina
+[2026-03-26T15:24:24.188Z] ACTION ✓ fetch: https://clawhub.com
+→ 4393 chars via jina
+[2026-03-26T15:24:24.189Z] ACTION ✓ updateKnowledge: OpenClaw → ГАП
+→ Экосистема скиллов для агентов и маркетплейс ClawHub
