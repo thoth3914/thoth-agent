@@ -103,13 +103,48 @@ async function callGemini(model, messages, maxTokens = 800) {
 /**
  * Универсальный вызов — выбирает провайдера по задаче
  * 
- * @param {string} task — тип задачи: 'thinking' | 'fast' | 'chat'
+ * @param {string} task — тип задачи: 'thinking' | 'fast' | 'chat' | 'strategy'
  * @param {Array}  messages — массив {role, content}
  * @param {number} maxTokens
+ * 
+ * Маршрутизация по задачам:
+ * - 'strategy' (глубокий анализ, бизнес-решения) → Claude Sonnet через OpenClaw
+ * - 'thinking' (циклы пробуждения, планирование)  → Claude Haiku (дешевле)
+ * - 'fast' (синтез результатов actions)            → Gemini Flash
+ * - 'chat' (разговор с пользователями)             → Groq 70b
+ * 
+ * Почему разные модели:
+ * - Claude для стратегии: лучше следует инструкциям, сильнее в аналитике
+ * - Groq для чатов: быстрый, без задержек Telegram
+ * - Gemini для синтеза: дешёвый, достаточен для суммаризации
  */
+async function callOpenAI(model, messages, maxTokens = 800) {
+  if (!openai) throw new Error('OpenAI not configured');
+  const res = await openai.chat.completions.create({ model, messages, max_tokens: maxTokens });
+  if (res.usage) trackLLMUsage(res.usage, model);
+  return res.choices[0].message.content;
+}
+
 async function callLLM(task, messages, maxTokens = 800) {
-  // FAST задачи → Gemini Flash если доступна (дешевле, быстрее)
-  // Требует: Google Cloud billing включён + $300 credit активирован
+  // STRATEGY — Claude Sonnet: глубокий анализ, долгосрочные решения
+  if (task === 'strategy' && openai) {
+    try {
+      return await callOpenAI(MODELS.claude_sonnet, messages, maxTokens);
+    } catch (e) {
+      console.log(`[llm] Claude strategy failed (${e.message.slice(0,60)}), falling back to Groq`);
+    }
+  }
+
+  // THINKING — Claude Haiku: для циклов (баланс качество/стоимость)
+  if (task === 'thinking' && openai) {
+    try {
+      return await callOpenAI(MODELS.claude_haiku, messages, maxTokens);
+    } catch (e) {
+      console.log(`[llm] Claude thinking failed (${e.message.slice(0,60)}), falling back to Groq`);
+    }
+  }
+
+  // FAST — Gemini Flash если доступна
   if (task === 'fast' && google && process.env.GOOGLE_BILLING_ENABLED === 'true') {
     try {
       return await callGemini(MODELS.gemini_flash, messages, maxTokens);
@@ -118,7 +153,7 @@ async function callLLM(task, messages, maxTokens = 800) {
     }
   }
 
-  // Всё остальное → Groq 70b
+  // DEFAULT / CHAT → Groq 70b (быстрый, без задержек)
   try {
     return await callGroq(MODELS.groq_70b, messages, maxTokens);
   } catch (e) {

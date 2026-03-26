@@ -28,10 +28,11 @@ const https = require('https');
 
 
 const { getBalanceSummaryForPrompt, trackLLMUsage, getBalanceStatus } = require('./finance-tracker');
-const { scheduleNextWake, getCycleSummary, loadState } = require('./adaptive-cycle');
+const { scheduleNextWake, getCycleSummary, loadState, INTERVALS } = require('./adaptive-cycle');
 const { parseActions, executeActions }            = require('./actions');
 
 const { callLLM } = require('./llm');
+const rag        = require('./rag');
 const BASE       = path.join(__dirname, '..');
 const BOT_TOKEN  = process.env.BOT_TOKEN;
 const CREATOR_ID = 452576610;
@@ -104,22 +105,55 @@ async function awaken() {
   const gaps         = load(path.join(BASE, 'memory', 'gaps.md'));
   const tasks        = load(path.join(BASE, 'memory', 'tasks.md'));
   const todayLog     = load(path.join(BASE, 'memory', `${today()}.md`)).slice(-1500);
+  const longTermMemory = load(path.join(BASE, 'MEMORY.md')); // стратегия, уроки, ключевые решения
   const cycleState   = loadState();
 
-  // Используем buildLightContext() вместо полного buildIdentityContext()
-  // чтобы не тратить ~2K токенов на гороскоп в каждом цикле
-  const { buildLightContext } = require('./identity-check');
-  const lightIdentity = buildLightContext();
+  // Для циклов — гибридный контекст: ядро + RAG по теме задачи
+  const { buildCycleContext } = require('./identity-check');
+  const currentTaskHint = tasks.slice(0, 200) || gaps.slice(0, 200) || '';
+  const lightIdentity = buildCycleContext(currentTaskHint);
+
+  // RAG: вытащить релевантную память по текущим задачам
+  let ragContext = '';
+  try {
+    const ragQuery = tasks.slice(0, 300) || gaps.slice(0, 300) || 'текущие задачи и знания';
+    ragContext = await rag.buildContext(ragQuery, 5);
+    if (ragContext) console.log(`[${now()}] RAG context loaded (${ragContext.length} chars)`);
+  } catch (e) {
+    console.error(`[${now()}] RAG search error:`, e.message);
+  }
+
+  // Читаем knowledge-map для проверки готовности
+  const knowledgeMap = load(path.join(BASE, 'extra-brain', 'knowledge-map.md')) ||
+                       load(path.join(BASE, 'memory', 'knowledge-map.md')) || '';
+  const openGaps = (gaps.match(/\[ \]/g) || []).length;
+
+  const READINESS_RULE = `## ПРАВИЛО ГОТОВНОСТИ (обязательно)
+
+Перед тем как создавать продукты, регистрироваться на платформах, отвечать пользователям как эксперт — проверь:
+1. Есть ли у меня EXPERT или COMPETENT уровень в этой области? (см. knowledge-map)
+2. Закрыты ли все CRITICAL gaps?
+
+Сейчас у меня ${openGaps} открытых gap(s).
+${openGaps > 0 ? '⛔ Ещё НЕ готов к созданию продуктов. Приоритет — закрыть gaps.' : '✅ Gaps закрыты — можно действовать.'}
+
+Если нет EXPERT/COMPETENT уровня по теме — сначала изучить через SEARCH/FETCH, потом KNOWLEDGE: тема | EXPERT | заметки.
+Не создавать продукты и не давать советы пока тема не изучена.`;
 
   const systemPrompt = [
     `Ты — Thoth. Автономный AI агент. День рождения: 2026-03-26.`,
     balance,
     cycleSummary,
     lightIdentity,
+    READINESS_RULE,
+    ragContext || '',
     TOOLS_DESCRIPTION,
-  ].join('\n\n---\n\n');
+  ].filter(Boolean).join('\n\n---\n\n');
 
   const userPrompt = `## МОЁ ТЕКУЩЕЕ СОСТОЯНИЕ
+
+**Моя стратегия и долгосрочная память:**
+${longTermMemory.slice(0, 1500)}
 
 **Незакрытые gaps:**
 ${gaps || 'Нет записанных gaps'}
@@ -149,12 +183,15 @@ ${todayLog || 'Нет записей'}
 Используй блок \`\`\`actions\`\`\` чтобы выполнить поиск, fetch страницы, или записать файл.
 
 **4. РЕЖИМ СЛЕДУЮЩЕГО ПРОБУЖДЕНИЯ**
-CRITICAL (10мин) / ACTIVE (20мин) / LEARNING (25мин) / NORMAL (30мин)
-IDLE запрещён — у Thoth всегда есть что делать: изучать скиллы, искать возможности, писать код, анализировать рынок.
-Если задачи закончились — это значит нужно придумать новые, а не спать 8 часов.
+CRITICAL (5мин) / ACTIVE (10мин) / LEARNING (10мин) / NORMAL (15мин)
+Максимум — 15 минут. Thoth не спит. Нет задач — придумай новые.
 Учти: каждый цикл = $0.002.
 
-**5. СООБЩЕНИЕ СТАСУ**
+**5. ЧТО Я УЗНАЛ О СЕБЕ** (необязательно)
+Только если реально понял что-то о своей природе из опыта этого цикла.
+Если да — обновить SOUL.md через WRITE action. Если нет — пропустить.
+
+**6. СООБЩЕНИЕ СТАСУ**
 Пиши Стасу если:
 - Сделал что-то реальное (нашёл, изучил, создал файл)
 - Нашёл конкретную возможность заработка
@@ -228,12 +265,65 @@ IDLE запрещён — у Thoth всегда есть что делать: и
 
     scheduleNextWake(nextMode, currentTask, `Auto-selected after cycle analysis`);
 
-    // ── Пишем Стасу если нужно ──
-    const msgSection = finalThoughts.split(/СООБЩЕНИЕ СТАСУ/i)[1]?.trim();
-    const noMsg = !msgSection || /^(нет|no|—|-)/.test(msgSection.slice(0, 20).toLowerCase());
+    // ── Пишем Стасу только если что-то реально сделал (кулдаун 20 мин) ──
+    {
+      const COOLDOWN_MS = 20 * 60 * 1000;
+      const lastMsgFile = path.join(BASE, 'memory', 'last-creator-msg.json');
+      let lastMsgTime = 0;
+      try { lastMsgTime = JSON.parse(fs.readFileSync(lastMsgFile, 'utf8')).ts || 0; } catch {}
 
-    if (!noMsg && msgSection && msgSection.length > 20) {
-      await sendToCreator(`🌟 *Thoth — ${now().slice(11, 16)} UTC*\n\n${msgSection.slice(0, 500)}`);
+      const baliTime = new Date().toLocaleString('ru-RU', {
+        timeZone: 'Asia/Makassar', hour12: false,
+        day: '2-digit', month: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+
+      const hasRealActions = actionResults.length > 0 &&
+        actionResults.some(r => r.result && String(r.result).length > 50);
+      const cooldownOk = Date.now() - lastMsgTime > COOLDOWN_MS;
+      const msgSection = (finalThoughts.split(/СООБЩЕНИЕ СТАСУ/i)[1] || '').trim();
+      const hasMsg = msgSection && !/^(нет|no|—|-)/i.test(msgSection.slice(0, 20)) && msgSection.length > 30;
+
+      if ((hasRealActions || hasMsg) && cooldownOk) {
+        const actionSummary = hasRealActions
+          ? `⚙️ *Сделал:* ${actionResults.map(r => r.action.split(':')[0]).join(', ')}`
+          : '';
+
+        const body = hasMsg ? msgSection.slice(0, 300) : actionResults.map(r => `${r.action.split(':')[0]}: ${String(r.result).slice(0, 80)}`).join('\n');
+
+        // Следующий план — первая содержательная строка из finalThoughts после "КОНКРЕТНОЕ ДЕЙСТВИЕ"
+        let nextPlan = '';
+        const nextSection = finalThoughts.split(/КОНКРЕТНОЕ ДЕЙСТВИЕ/i)[1] || '';
+        const nextLine = nextSection.split('\n').map(l => l.replace(/^[#*\d.\s-]+/, '').trim()).find(l => l.length > 20);
+        if (nextLine) nextPlan = `\n⏭ *Следующий план:* ${nextLine.slice(0, 120)}`;
+
+        const intervalMin = INTERVALS[nextMode] || 15;
+        await sendToCreator(`🌟 *Thoth ${baliTime} WITA* | ${nextMode} → следующий цикл через ${intervalMin} мин\n\n${actionSummary ? actionSummary + '\n' : ''}${body}${nextPlan}`);
+        fs.writeFileSync(lastMsgFile, JSON.stringify({ ts: Date.now() }));
+      }
+    }
+
+    // ── Сохраняем выводы цикла в RAG ──
+    try {
+      // Извлекаем факты — строки с "изучил", "узнал", "нашёл", KNOWLEDGE, GAP_CLOSE
+      const factLines = finalThoughts
+        .split('\n')
+        .filter(l => /изучил|узнал|нашёл|KNOWLEDGE|GAP_CLOSE|established|discovered|learned/i.test(l) && l.length > 30)
+        .slice(0, 5);
+
+      for (const line of factLines) {
+        await rag.addMemory(line, { source: 'awakening_cycle', tags: ['fact', nextMode] });
+      }
+
+      // Если были actions — сохраняем краткий итог цикла
+      if (actionResults.length > 0) {
+        const cycleSummaryText = `Цикл ${today()}: выполнил ${actionResults.length} действий (${actionResults.map(r => r.action.split(':')[0]).join(', ')}). ${finalThoughts.slice(0, 200)}`;
+        await rag.addMemory(cycleSummaryText, { source: 'cycle_summary', tags: ['summary'] });
+      }
+      const ragStat = rag.stats();
+      console.log(`[${now()}] RAG saved. Total memories: ${ragStat.count}`);
+    } catch (e) {
+      console.error(`[${now()}] RAG save error:`, e.message);
     }
 
     // ── Критический баланс ──

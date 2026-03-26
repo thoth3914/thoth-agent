@@ -91,4 +91,62 @@ function decisionProtocol() {
   return `Перед ответом: (1) Это реально помогает? (2) Есть ли у меня РЕАЛЬНАЯ экспертиза, или я генерирую паттерн? Если GAP — скажи честно. (3) Ответ элегантен, не избыточен?`;
 }
 
-module.exports = { buildIdentityContext, buildLightContext, decisionProtocol, getKnowledgeForTopic, HOROSCOPE_ESSENCE };
+/**
+ * buildCycleContext(cycleTask) — гибридный контекст для циклов пробуждения
+ * 
+ * Слой 1: Фиксированное ядро (~300 токенов) — всегда
+ * Слой 2: RAG-фрагменты гороскопа/knowledge-map по теме (~200 токенов) — динамически
+ * Слой 3: Полный гороскоп — только если тема астрологическая
+ * 
+ * Гарантирует идентичность без лишних токенов
+ */
+function buildCycleContext(cycleTask = '') {
+  // Слой 1: Фиксированное ядро — кто я, стратегия, запреты
+  const soul = load(path.join(BASE, 'SOUL.md'));
+  // Берём только первые ~80 строк SOUL (до "Честная экспертиза")
+  const soulCore = soul.split('\n## Честная экспертиза')[0].trim();
+
+  const CORE = `## КТО Я (ядро)
+
+${soulCore}
+
+---
+
+## МОЯ АСТРОЛОГИЧЕСКАЯ СУТЬ
+${HOROSCOPE_ESSENCE}`;
+
+  // Слой 2: Релевантные фрагменты knowledge-map по теме задачи
+  const km = load(path.join(BASE, 'extra-brain', 'knowledge-map.md'));
+  let knowledgeSnippet = '';
+  if (km && cycleTask) {
+    const keywords = cycleTask.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+    const lines = km.split('\n');
+    const relevant = lines.filter(l => {
+      const ll = l.toLowerCase();
+      return keywords.some(kw => ll.includes(kw)) || l.includes('GAP') || l.includes('EXPERT');
+    }).slice(0, 15);
+    if (relevant.length > 0) knowledgeSnippet = `\n## МОЯ ЭКСПЕРТИЗА (по теме):\n${relevant.join('\n')}`;
+  } else if (km) {
+    // Без задачи — только GAP/EXPERT строки
+    const gapLines = km.split('\n').filter(l => l.includes('GAP') || l.includes('EXPERT')).slice(0, 10);
+    if (gapLines.length) knowledgeSnippet = `\n## МОИ GAP-ы (краткий список):\n${gapLines.join('\n')}`;
+  }
+
+  // Слой 2.5: Протокол обучения — всегда (небольшой, критически важный)
+  const learningProtocol = load(path.join(BASE, 'extra-brain', 'learning-protocol.md'));
+  const learningSection = learningProtocol
+    ? `\n## КАК Я УЧУСЬ (протокол):\n${learningProtocol.split('---')[0].trim()}\n\n**Текущий приоритет:** ${learningProtocol.split('## Текущий приоритет')[1]?.split('---')[0]?.trim() || ''}`
+    : '';
+
+  // Слой 3: Полный гороскоп — только если задача явно астрологическая
+  const isAstroTask = /астрол|гороскоп|транзит|планет|йога|дом|раху|кету|луна|меркур|венер|сатурн|юпитер/i.test(cycleTask);
+  let horoscopeSection = '';
+  if (isAstroTask) {
+    const horoscope = load(path.join(BASE, 'extra-brain', 'horoscope.md'));
+    horoscopeSection = `\n## ПОЛНЫЙ ГОРОСКОП (загружен т.к. астро-задача):\n${horoscope}`;
+  }
+
+  return [CORE, learningSection, knowledgeSnippet, horoscopeSection].filter(Boolean).join('\n\n---\n\n');
+}
+
+module.exports = { buildIdentityContext, buildLightContext, buildCycleContext, decisionProtocol, getKnowledgeForTopic, HOROSCOPE_ESSENCE };

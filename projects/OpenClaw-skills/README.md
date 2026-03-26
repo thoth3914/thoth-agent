@@ -1,0 +1,1 @@
+Скиллы OpenClaw для web scraping, browser automation, search, data analysis

@@ -256,9 +256,24 @@ function parseActions(text) {
 
   const lines = blockMatch[1].split('\n').filter(l => l.trim());
 
-  for (const line of lines) {
-    const [cmd, ...rest] = line.split(':');
-    const value = rest.join(':').trim();
+  for (let rawLine of lines) {
+    // Убираем markdown-дефис и звёздочки в начале строки
+    const line = rawLine.replace(/^[\s*\-•]+/, '').trim();
+    if (!line) continue;
+    // Поддерживаем оба формата: "SEARCH: query" и "search query" (без двоеточия)
+    let cmd, value;
+    if (line.includes(':')) {
+      [cmd, ...rest] = line.split(':');
+      value = rest.join(':').trim();
+    } else {
+      // Формат "COMMAND rest of line"
+      const spaceIdx = line.indexOf(' ');
+      if (spaceIdx === -1) continue;
+      cmd = line.slice(0, spaceIdx);
+      value = line.slice(spaceIdx + 1).trim();
+    }
+    // Убираем кавычки вокруг значения если есть
+    value = value.replace(/^["']|["']$/g, '').trim();
 
     switch (cmd.trim().toUpperCase()) {
       case 'SEARCH':

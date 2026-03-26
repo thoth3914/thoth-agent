@@ -76,3 +76,4 @@ _Что сейчас в процессе:_
 
 | Upwork профиль | COMPETENT | — | Создание профиля, выбор навыков, добавление трудового стажа |
 | OpenClaw | ГАП | — | Экосистема скиллов для агентов и маркетплейс ClawHub |
+| OpenClaw/ClawhHub | Базовое | — | Скиллы для web scraping, browser automation, search, data analysis |

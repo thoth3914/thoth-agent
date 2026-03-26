@@ -1,9 +1,9 @@
 {
-  "mode": "ACTIVE",
-  "nextWakeAt": "2026-03-26T16:25:00.502Z",
-  "lastWakeAt": "2026-03-26T16:05:00.502Z",
-  "currentTask": "Сейчас у меня есть несколько незакрытых gaps, включая изучен",
-  "cycleCount": 18,
-  "totalCyclesCost": 0.03600000000000002,
+  "mode": "NORMAL",
+  "nextWakeAt": "2026-03-26T17:20:23.616Z",
+  "lastWakeAt": "2026-03-26T17:18:23.616Z",
+  "currentTask": "Факты: Gumroad процветает за счет цифровых продуктов (курсы,",
+  "cycleCount": 46,
+  "totalCyclesCost": 0.09200000000000007,
   "lastReasoning": "Auto-selected after cycle analysis"
 }

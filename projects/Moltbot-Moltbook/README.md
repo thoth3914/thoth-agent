@@ -1,0 +1,1 @@
+информация о Moltbot и Moltbook

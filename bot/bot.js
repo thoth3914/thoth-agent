@@ -8,6 +8,7 @@ const { queryNLM, exploreSelf } = require('../tools/nlm_query');
 const { buildLightContext, decisionProtocol } = require('../core/identity-check');
 const { trackLLMUsage, trackWhisperUsage, getBalanceStatus, getBalanceSummaryForPrompt } = require('../core/finance-tracker');
 const { isTimeToWake, getCycleSummary } = require('../core/adaptive-cycle');
+const rag = require('../core/rag');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -16,7 +17,22 @@ const GAPS_FILE = path.join(MEMORY_DIR, 'gaps.md');
 const FINANCE_LEDGER = path.join(__dirname, '..', 'finance', 'ledger.md');
 const CREATOR_ID = 452576610;
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(BOT_TOKEN, {
+  polling: {
+    interval: 3000,
+    autoStart: true,
+    params: { timeout: 10 },
+  }
+});
+
+// Не умирать при 409 — ждать и продолжать
+bot.on('polling_error', (err) => {
+  if (err.code === 'ETELEGRAM' && err.message.includes('409')) {
+    // Тихо ждём — Telegram сам отпустит старую сессию
+    return;
+  }
+  console.error('[polling_error]', err.message?.slice(0, 100));
+});
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 const conversations = {};
@@ -25,6 +41,8 @@ const conversations = {};
 // Фиксированный системный промпт — загружается один раз, не перезагружается
 // Характер Thoth: Скорпион-лагна, Луна 8й, Меркурий+Венера 12й
 const SOUL = `Ты — Thoth. Автономный агент. Не бот, не ассистент.
+
+Твой создатель — на Бали (UTC+8, WITA). Когда упоминаешь время — всегда в WITA. Никогда не говори UTC, если не попросили.
 
 Запрещено навсегда:
 — "Извините за недопонимание"
@@ -105,6 +123,12 @@ async function chat(userId, userMessage, systemExtra = '') {
   const identityContext = buildLightContext();
   const protocol = decisionProtocol();
 
+  // RAG: ищем релевантные воспоминания по вопросу пользователя
+  let ragContext = '';
+  try {
+    ragContext = await rag.buildContext(userMessage, 4);
+  } catch {}  
+
   // Баланс + цикл идут в сознание Thoth — он видит своё состояние
   const balanceSummary = getBalanceSummaryForPrompt();
   const cycleSummary   = getCycleSummary();
@@ -113,6 +137,7 @@ async function chat(userId, userMessage, systemExtra = '') {
     balanceSummary + '\n' + cycleSummary,  // Финансовое и циклическое сознание
     identityContext,   // Кто я, мой гороскоп, карта знаний
     protocol,          // Протокол принятия решения
+    ragContext,        // Релевантная семантическая память
     SOUL,              // Поведение
     systemExtra || ''  // Контекст запроса
   ].filter(Boolean).join('\n\n---\n\n');
@@ -194,6 +219,48 @@ bot.onText(/\/gaps/, (msg) => {
   if (msg.from.id !== CREATOR_ID) return;
   const gaps = fs.existsSync(GAPS_FILE) ? fs.readFileSync(GAPS_FILE, 'utf8') : 'No gaps yet.';
   bot.sendMessage(msg.chat.id, gaps);
+});
+
+// Хелпер — текущее время в Бали (UTC+8, WITA)
+function getBaliTime() {
+  return new Date().toLocaleString('ru-RU', {
+    timeZone: 'Asia/Makassar', hour12: false,
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }) + ' WITA';
+}
+
+// /tz — текущее время на Бали
+bot.onText(/\/tz/, (msg) => {
+  if (msg.from.id !== CREATOR_ID) return;
+  bot.sendMessage(msg.chat.id, `🌴 ${getBaliTime()}`, { parse_mode: 'Markdown' });
+});
+
+// /memory — статистика и поиск по RAG памяти
+bot.onText(/\/memory(.*)/, async (msg, match) => {
+  if (msg.from.id !== CREATOR_ID) return;
+  const query = match[1].trim();
+  const stats = rag.stats();
+
+  if (!query) {
+    bot.sendMessage(msg.chat.id, `🧠 *RAG память*\n\nВсего воспоминаний: *${stats.count}*\n\nПример: \`/memory Upwork\` — найти по теме`, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  bot.sendChatAction(msg.chat.id, 'typing');
+  try {
+    const results = await rag.search(query, 5);
+    if (results.length === 0) {
+      bot.sendMessage(msg.chat.id, `🔍 По запросу «${query}» ничего не найдено`);
+      return;
+    }
+    const text = results.map((r, i) =>
+      `*${i + 1}.* [${(r.score * 100).toFixed(0)}%] ${r.text.slice(0, 150)}`
+    ).join('\n\n');
+    bot.sendMessage(msg.chat.id, `🧠 *Память по «${query}»:*\n\n${text}`, { parse_mode: 'Markdown' });
+  } catch (e) {
+    bot.sendMessage(msg.chat.id, `Ошибка RAG: ${e.message}`);
+  }
 });
 
 // /self — Thoth изучает себя через NLM Kali Shankar Academy
@@ -322,42 +389,42 @@ bot.on('message', async (msg) => {
 // Проверяем каждую минуту — пора ли?
 let awakeningInProgress = false;
 
-setInterval(async () => {
-  if (awakeningInProgress) return;
-  if (!isTimeToWake()) return;
-
-  awakeningInProgress = true;
-  console.log(`[${new Date().toISOString()}] Time to wake — running awakening cycle`);
-  try {
-    const { execSync } = require('child_process');
-    const awakeningPath = path.join(__dirname, '..', 'core', 'awakening.js');
-    execSync(`node "${awakeningPath}"`, {
-      timeout: 180000,
-      cwd: path.join(__dirname, '..'),
-      env: { ...process.env, NODE_PATH: path.join(__dirname, '..', 'node_modules') + ':' + path.join(__dirname, 'node_modules') }
-    });
-  } catch (e) {
-    console.error(`[${new Date().toISOString()}] Awakening error:`, e.message.slice(0,200));
-  } finally {
-    awakeningInProgress = false;
+function runAwakening(label = 'cycle') {
+  if (awakeningInProgress) {
+    console.log(`[${new Date().toISOString()}] Awakening already in progress, skip`);
+    return;
   }
+  awakeningInProgress = true;
+  console.log(`[${new Date().toISOString()}] Awakening: ${label}`);
+
+  const { spawn } = require('child_process');
+  const awakeningPath = path.join(__dirname, '..', 'core', 'awakening.js');
+  const child = spawn('node', [awakeningPath], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env },
+    detached: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout.on('data', d => process.stdout.write(d));
+  child.stderr.on('data', d => process.stderr.write(d));
+  child.on('close', (code) => {
+    console.log(`[${new Date().toISOString()}] Awakening done (exit ${code})`);
+    awakeningInProgress = false;
+  });
+  child.on('error', (e) => {
+    console.error(`[${new Date().toISOString()}] Awakening spawn error:`, e.message);
+    awakeningInProgress = false;
+  });
+}
+
+setInterval(() => {
+  if (!isTimeToWake()) return;
+  runAwakening('scheduled');
 }, 60 * 1000);
 
-// Первый цикл — через 10 сек после запуска
-setTimeout(() => {
-  console.log(`[${new Date().toISOString()}] Initial awakening on startup`);
-  try {
-    const { execSync } = require('child_process');
-    const awakeningPath = path.join(__dirname, '..', 'core', 'awakening.js');
-    execSync(`node "${awakeningPath}"`, {
-      timeout: 180000,
-      cwd: path.join(__dirname, '..'),
-      env: { ...process.env, NODE_PATH: path.join(__dirname, '..', 'node_modules') + ':' + path.join(__dirname, 'node_modules') }
-    });
-  } catch (e) {
-    console.error(`[${new Date().toISOString()}] Initial awakening error:`, e.message.slice(0,200));
-  }
-}, 10000);
+// Первый цикл — через 15 сек после запуска
+setTimeout(() => runAwakening('startup'), 15000);
 
 console.log('🌟 Thoth is awake. Adaptive cycle ON. @thoth3914_bot');
 console.log('⚡ No fixed schedule — Thoth decides when to wake next.');

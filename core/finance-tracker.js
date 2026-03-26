@@ -150,10 +150,29 @@ ${bar} ${pct}%
 function getBalanceSummaryForPrompt() {
   const b = loadBalance();
   const pct = ((b.currentBalance / b.startingBalance) * 100).toFixed(1);
+
+  // Считаем runway — сколько дней осталось при текущем темпе сжигания
+  let runwayMsg = '';
+  try {
+    const ledger = require('fs').readFileSync(require('path').join(__dirname, '..', 'finance', 'ledger.md'), 'utf8');
+    const spentMatch = ledger.match(/startDate[^\n]*\n/);
+    // Дней с начала
+    const startDate = new Date('2026-03-26');
+    const daysElapsed = Math.max(1, Math.round((Date.now() - startDate) / 86400000));
+    const dailyBurn = b.totalSpent / daysElapsed;
+    const netDailyBurn = dailyBurn - (b.totalEarned / daysElapsed);
+    if (netDailyBurn > 0) {
+      const runway = Math.round((b.currentBalance - 100) / netDailyBurn); // до $100 минимума
+      runwayMsg = ` | 🔥 Сжигаю $${dailyBurn.toFixed(3)}/день | Runway до $100: ~${runway} дней`;
+      if (b.totalEarned === 0) runwayMsg += ' | ⚠️ Доход = $0 — стратегия нужна СЕЙЧАС';
+    }
+  } catch {}
+
   let urgency = '';
   if (b.currentBalance < 50)  urgency = ' ⚠️ КРИТИЧНО — нужен срочный доход';
   else if (b.currentBalance < 100) urgency = ' ⚡ баланс снижается — нужен активный заработок';
-  return `[Мой баланс: $${b.currentBalance.toFixed(2)} / $${b.startingBalance} (${pct}%) | Потрачено: $${b.totalSpent.toFixed(4)} | Заработано: $${b.totalEarned.toFixed(2)}${urgency}]`;
+
+  return `[Мой баланс: $${b.currentBalance.toFixed(2)} / $${b.startingBalance} (${pct}%) | Потрачено: $${b.totalSpent.toFixed(4)} | Заработано: $${b.totalEarned.toFixed(2)}${runwayMsg}${urgency}]`;
 }
 
 module.exports = { trackLLMUsage, trackWhisperUsage, trackIncome, getBalanceStatus, getBalanceSummaryForPrompt };
